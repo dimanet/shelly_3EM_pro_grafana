@@ -1,0 +1,14 @@
+*.retry
+.ansible/
+.venv/
+.vault-password
+inventory/hosts.yml
+inventory/group_vars/all/vault.yml
+files/tls/*.crt
+files/tls/*.key
+!files/tls/.gitkeep
+files/tls/*.pem
+files/tls/*.p12
+files/tls/*.pfx
+files/tls/*.jks
+files/tls/*.keystore

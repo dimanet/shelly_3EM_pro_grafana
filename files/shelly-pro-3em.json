@@ -1,0 +1,88 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1, "title": "Total active power", "type": "stat",
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "shelly_power_active_total_watts{targetName=\"main_meter\"}", "legendFormat": "Total"}],
+      "fieldConfig": {"defaults": {"unit": "watt"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "area", "textMode": "auto"}
+    },
+    {
+      "id": 2, "title": "Total current", "type": "stat",
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "shelly_current_total_amps{targetName=\"main_meter\"}", "legendFormat": "Total"}],
+      "fieldConfig": {"defaults": {"unit": "amp"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "area", "textMode": "auto"}
+    },
+    {
+      "id": 3, "title": "Imported energy", "type": "stat",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "shelly_energy_active_total_wh{targetName=\"main_meter\",phase=\"\"} / 1000", "legendFormat": "Imported"}],
+      "fieldConfig": {"defaults": {"unit": "kwatth"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "area", "textMode": "auto"}
+    },
+    {
+      "id": 4, "title": "Active power by phase", "type": "timeseries",
+      "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "shelly_power_active_watts{targetName=\"main_meter\"}", "legendFormat": "Phase {{phase}}"}],
+      "fieldConfig": {"defaults": {"unit": "watt"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 5, "title": "Voltage by phase", "type": "timeseries",
+      "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "shelly_voltage_volts{targetName=\"main_meter\"}", "legendFormat": "Phase {{phase}}"}],
+      "fieldConfig": {"defaults": {"unit": "volt", "min": 200, "max": 260}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 6, "title": "Current by phase", "type": "timeseries",
+      "gridPos": {"x": 0, "y": 13, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "shelly_current_amps{targetName=\"main_meter\"}", "legendFormat": "Phase {{phase}}"}],
+      "fieldConfig": {"defaults": {"unit": "amp"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 7, "title": "Power factor by phase", "type": "timeseries",
+      "gridPos": {"x": 12, "y": 13, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "shelly_power_factor{targetName=\"main_meter\"}", "legendFormat": "Phase {{phase}}"}],
+      "fieldConfig": {"defaults": {"unit": "none", "min": -1, "max": 1}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 8, "title": "Imported energy by phase", "type": "timeseries",
+      "gridPos": {"x": 0, "y": 21, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "shelly_energy_active_total_wh{targetName=\"main_meter\",phase=~\"1|2|3\"} / 1000", "legendFormat": "Phase {{phase}}"}],
+      "fieldConfig": {"defaults": {"unit": "kwatth"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 9, "title": "Exported energy by phase", "type": "timeseries",
+      "gridPos": {"x": 12, "y": 21, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "shelly_energy_active_returned_total_wh{targetName=\"main_meter\",phase=~\"1|2|3\"} / 1000", "legendFormat": "Phase {{phase}}"}],
+      "fieldConfig": {"defaults": {"unit": "kwatth"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "tags": ["shelly", "energy"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "Shelly Pro 3EM — Energy",
+  "uid": "shelly-pro-3em",
+  "version": 1
+}

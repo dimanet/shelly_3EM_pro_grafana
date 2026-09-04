@@ -1,0 +1,19 @@
+---
+energy_monitoring_hostname: grafana.example.com
+energy_monitoring_shelly_host: 192.0.2.10
+energy_monitoring_shelly_password: ""
+energy_monitoring_shelly_target_name: main_meter
+energy_monitoring_site_label: home
+energy_monitoring_scrape_interval: 10s
+energy_monitoring_prometheus_retention: 365d
+energy_monitoring_grafana_admin_user: admin
+energy_monitoring_root: /opt/energy-monitoring
+energy_monitoring_config_root: /etc/energy-monitoring
+energy_monitoring_exporter_image: docker.io/lukassoo/shelly-pro-3em-exporter:latest
+energy_monitoring_prometheus_image: quay.io/prometheus/prometheus:latest
+energy_monitoring_grafana_image: docker.io/grafana/grafana:latest
+energy_monitoring_tls_cert_src: "{{ playbook_dir }}/files/tls/grafana.crt"
+energy_monitoring_tls_key_src: "{{ playbook_dir }}/files/tls/grafana.key"
+
+# Define this in inventory/group_vars/all/vault.yml and encrypt with ansible-vault:
+# energy_monitoring_grafana_admin_password: "change-me"

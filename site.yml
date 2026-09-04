@@ -1,0 +1,449 @@
+---
+- name: Deploy Shelly Pro 3EM energy monitoring
+  hosts: energy_monitoring
+  become: true
+  gather_facts: true
+
+  handlers:
+    - name: Restart Shelly exporter
+      ansible.builtin.systemd_service:
+        name: shelly-exporter.service
+        state: restarted
+      listen: restart shelly exporter
+
+    - name: Restart Prometheus
+      ansible.builtin.systemd_service:
+        name: prometheus.service
+        state: restarted
+      listen: restart prometheus
+
+    - name: Restart Grafana
+      ansible.builtin.systemd_service:
+        name: grafana.service
+        state: restarted
+      listen: restart grafana
+
+    - name: Restart nginx
+      ansible.builtin.systemd_service:
+        name: nginx.service
+        state: restarted
+      listen: restart nginx
+
+  tasks:
+    - name: Validate required deployment variables
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == 'RedHat'
+          - energy_monitoring_hostname | length > 0
+          - energy_monitoring_shelly_host | length > 0
+          - energy_monitoring_grafana_admin_password | length > 0
+          - energy_monitoring_tls_cert_src | length > 0
+          - energy_monitoring_tls_key_src | length > 0
+        fail_msg: >-
+          Fedora/RHEL, hostname, Shelly address, Grafana password, and
+          controller-side TLS certificate/key paths are required.
+      no_log: true
+
+    - name: Set persistent hostname
+      ansible.builtin.hostname:
+        name: "{{ energy_monitoring_hostname }}"
+
+    - name: Check whether cloud-init configuration exists
+      ansible.builtin.stat:
+        path: /etc/cloud/cloud.cfg.d
+      register: cloud_cfg
+
+    - name: Prevent cloud-init from resetting the hostname
+      ansible.builtin.copy:
+        content: "preserve_hostname: true\n"
+        dest: /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
+        owner: root
+        group: root
+        mode: "0644"
+      when: cloud_cfg.stat.isdir | default(false)
+
+    - name: Install runtime packages
+      ansible.builtin.dnf:
+        name:
+          - firewalld
+          - nginx
+          - podman
+          - policycoreutils-python-utils
+        state: present
+
+    - name: Enable and start firewalld
+      ansible.builtin.systemd_service:
+        name: firewalld.service
+        enabled: true
+        state: started
+
+    - name: Create application directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode | default('0755') }}"
+      loop:
+        - {path: "{{ energy_monitoring_root }}/exporter"}
+        - {path: "{{ energy_monitoring_root }}/prometheus/config"}
+        - {path: "{{ energy_monitoring_root }}/prometheus/data", owner: '65534', group: '65534'}
+        - {path: "{{ energy_monitoring_root }}/grafana/data", owner: '472', group: '0'}
+        - {path: "{{ energy_monitoring_root }}/grafana/provisioning/datasources"}
+        - {path: "{{ energy_monitoring_root }}/grafana/provisioning/dashboards"}
+        - {path: "{{ energy_monitoring_root }}/grafana/dashboards"}
+        - {path: "{{ energy_monitoring_config_root }}", mode: '0750'}
+        - {path: /etc/containers/systemd}
+        - {path: /etc/nginx/conf.d}
+        - {path: /etc/pki/tls/private, mode: '0700'}
+
+    - name: Install Shelly exporter configuration
+      ansible.builtin.copy:
+        dest: "{{ energy_monitoring_root }}/exporter/shellyPro3EmExporter.yml"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          logToFile: false
+          logLevel: Information
+          listenPort: 10011
+          useOldIncorrectMetricNames: false
+          targets:
+            - name: "{{ energy_monitoring_shelly_target_name }}"
+              url: "{{ energy_monitoring_shelly_host }}"
+              password: "{{ energy_monitoring_shelly_password }}"
+              requestTimeoutTime: 3
+              targetMeters:
+                - {index: 1, ignoreVoltage: false, ignoreCurrent: false, ignoreActivePower: false, ignoreApparentPower: false, ignorePowerFactor: false}
+                - {index: 2, ignoreVoltage: false, ignoreCurrent: false, ignoreActivePower: false, ignoreApparentPower: false, ignorePowerFactor: false}
+                - {index: 3, ignoreVoltage: false, ignoreCurrent: false, ignoreActivePower: false, ignoreApparentPower: false, ignorePowerFactor: false}
+              ignoreTotalCurrent: false
+              ignoreTotalActivePower: false
+              ignoreTotalApparentPower: false
+              ignoreTotalActiveEnergy: false
+              ignoreTotalActiveReturnedEnergy: false
+              ignoreTotalActiveEnergyPhase1: false
+              ignoreTotalActiveEnergyPhase2: false
+              ignoreTotalActiveEnergyPhase3: false
+              ignoreTotalActiveReturnedEnergyPhase1: false
+              ignoreTotalActiveReturnedEnergyPhase2: false
+              ignoreTotalActiveReturnedEnergyPhase3: false
+      no_log: true
+      notify: restart shelly exporter
+
+    - name: Install Prometheus configuration
+      ansible.builtin.copy:
+        dest: "{{ energy_monitoring_root }}/prometheus/config/prometheus.yml"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          global:
+            scrape_interval: {{ energy_monitoring_scrape_interval }}
+            evaluation_interval: {{ energy_monitoring_scrape_interval }}
+          rule_files:
+            - /etc/prometheus/alerts.yml
+          scrape_configs:
+            - job_name: prometheus
+              static_configs:
+                - targets: ["127.0.0.1:9091"]
+            - job_name: shelly_pro_3em
+              scrape_interval: {{ energy_monitoring_scrape_interval }}
+              scrape_timeout: 5s
+              static_configs:
+                - targets: ["127.0.0.1:10011"]
+                  labels:
+                    site: "{{ energy_monitoring_site_label }}"
+      notify: restart prometheus
+
+    - name: Install Prometheus alert rules
+      ansible.builtin.copy:
+        dest: "{{ energy_monitoring_root }}/prometheus/config/alerts.yml"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          groups:
+            - name: shelly-pro-3em
+              rules:
+                - alert: ShellyMetricsUnavailable
+                  expr: up{job="shelly_pro_3em"} == 0
+                  for: 2m
+                  labels: {severity: critical}
+                  annotations:
+                    summary: Shelly Pro 3EM metrics are unavailable
+                    description: Prometheus cannot scrape the Shelly exporter for 2 minutes.
+                - alert: ShellyVoltageOutOfRange
+                  expr: shelly_voltage_volts{targetName="main_meter"} < 207 or shelly_voltage_volts{targetName="main_meter"} > 253
+                  for: 5m
+                  labels: {severity: warning}
+                  annotations:
+                    summary: Phase voltage is outside the normal 230 V +/-10% range
+                    description: A measured phase voltage is outside the configured range.
+      notify: restart prometheus
+
+    - name: Install Grafana datasource
+      ansible.builtin.copy:
+        dest: "{{ energy_monitoring_root }}/grafana/provisioning/datasources/prometheus.yml"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              uid: prometheus
+              type: prometheus
+              access: proxy
+              url: http://127.0.0.1:9091
+              isDefault: true
+              editable: false
+      notify: restart grafana
+
+    - name: Install Grafana dashboard provider
+      ansible.builtin.copy:
+        dest: "{{ energy_monitoring_root }}/grafana/provisioning/dashboards/default.yml"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          apiVersion: 1
+          providers:
+            - name: Energy monitoring
+              orgId: 1
+              folder: Energy
+              type: file
+              disableDeletion: true
+              updateIntervalSeconds: 30
+              options:
+                path: /var/lib/grafana/dashboards
+      notify: restart grafana
+
+    - name: Install Grafana dashboard
+      ansible.builtin.copy:
+        src: files/shelly-pro-3em.json
+        dest: "{{ energy_monitoring_root }}/grafana/dashboards/shelly-pro-3em.json"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart grafana
+
+    - name: Install Grafana secret environment
+      ansible.builtin.copy:
+        dest: "{{ energy_monitoring_config_root }}/grafana.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: "GF_SECURITY_ADMIN_PASSWORD={{ energy_monitoring_grafana_admin_password }}\n"
+      no_log: true
+      notify: restart grafana
+
+    - name: Install Shelly exporter Quadlet
+      ansible.builtin.copy:
+        dest: /etc/containers/systemd/shelly-exporter.container
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Shelly Pro 3EM Prometheus exporter
+          After=network-online.target
+          Wants=network-online.target
+
+          [Container]
+          ContainerName=shelly-exporter
+          Image={{ energy_monitoring_exporter_image }}
+          Network=host
+          Volume={{ energy_monitoring_root }}/exporter:/Config:Z
+
+          [Service]
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+      register: exporter_quadlet
+      notify: restart shelly exporter
+
+    - name: Install Prometheus Quadlet
+      ansible.builtin.copy:
+        dest: /etc/containers/systemd/prometheus.container
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Prometheus for energy monitoring
+          After=network-online.target shelly-exporter.service
+          Wants=network-online.target
+
+          [Container]
+          ContainerName=prometheus
+          Image={{ energy_monitoring_prometheus_image }}
+          Network=host
+          Volume={{ energy_monitoring_root }}/prometheus/config:/etc/prometheus:Z,ro
+          Volume={{ energy_monitoring_root }}/prometheus/data:/prometheus:Z
+          Exec=--config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus \
+            --storage.tsdb.retention.time={{ energy_monitoring_prometheus_retention }} \
+            --web.listen-address=127.0.0.1:9091
+
+          [Service]
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+      register: prometheus_quadlet
+      notify: restart prometheus
+
+    - name: Install Grafana Quadlet
+      ansible.builtin.copy:
+        dest: /etc/containers/systemd/grafana.container
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Grafana for energy monitoring
+          After=network-online.target prometheus.service
+          Wants=network-online.target
+
+          [Container]
+          ContainerName=grafana
+          Image={{ energy_monitoring_grafana_image }}
+          Network=host
+          Environment=GF_SERVER_HTTP_ADDR=127.0.0.1
+          Environment=GF_SERVER_HTTP_PORT=3000
+          Environment=GF_SERVER_DOMAIN={{ energy_monitoring_hostname }}
+          Environment=GF_SERVER_ROOT_URL=https://{{ energy_monitoring_hostname }}/
+          Environment=GF_SECURITY_ADMIN_USER={{ energy_monitoring_grafana_admin_user }}
+          Environment=GF_USERS_ALLOW_SIGN_UP=false
+          EnvironmentFile={{ energy_monitoring_config_root }}/grafana.env
+          Volume={{ energy_monitoring_root }}/grafana/data:/var/lib/grafana:Z
+          Volume={{ energy_monitoring_root }}/grafana/provisioning:/etc/grafana/provisioning:Z,ro
+          Volume={{ energy_monitoring_root }}/grafana/dashboards:/var/lib/grafana/dashboards:Z,ro
+
+          [Service]
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+      register: grafana_quadlet
+      notify: restart grafana
+
+    - name: Install TLS certificate
+      ansible.builtin.copy:
+        src: "{{ energy_monitoring_tls_cert_src }}"
+        dest: /etc/pki/tls/certs/grafana.crt
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart nginx
+
+    - name: Install TLS private key
+      ansible.builtin.copy:
+        src: "{{ energy_monitoring_tls_key_src }}"
+        dest: /etc/pki/tls/private/grafana.key
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: restart nginx
+
+    - name: Install nginx virtual host
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/grafana.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          server {
+              listen 80;
+              listen [::]:80;
+              server_name {{ energy_monitoring_hostname }};
+              return 301 https://$host$request_uri;
+          }
+          server {
+              listen 443 ssl;
+              listen [::]:443 ssl;
+              server_name {{ energy_monitoring_hostname }};
+              ssl_certificate /etc/pki/tls/certs/grafana.crt;
+              ssl_certificate_key /etc/pki/tls/private/grafana.key;
+              ssl_protocols TLSv1.2 TLSv1.3;
+              ssl_session_cache shared:SSL:10m;
+              ssl_session_timeout 1d;
+              location / {
+                  proxy_pass http://127.0.0.1:3000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto https;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection "upgrade";
+              }
+          }
+      notify: restart nginx
+
+    - name: Allow nginx to proxy under SELinux
+      ansible.posix.seboolean:
+        name: httpd_can_network_connect
+        state: true
+        persistent: true
+
+    - name: Open HTTP and HTTPS in firewalld
+      ansible.posix.firewalld:
+        service: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - http
+        - https
+
+    - name: Reload systemd for changed Quadlets
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: exporter_quadlet.changed or prometheus_quadlet.changed or grafana_quadlet.changed
+
+    - name: Validate nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Enable and start monitoring services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - shelly-exporter.service
+        - prometheus.service
+        - grafana.service
+        - nginx.service
+
+    - name: Apply pending service restarts
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for local service endpoints
+      ansible.builtin.uri:
+        url: "{{ item }}"
+        status_code: 200
+      register: endpoint_result
+      until: endpoint_result.status == 200
+      retries: 12
+      delay: 5
+      loop:
+        - http://127.0.0.1:10011/metrics
+        - http://127.0.0.1:9091/-/healthy
+        - http://127.0.0.1:3000/api/health
+
+    - name: Verify all Prometheus scrape targets are up
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9091/api/v1/targets
+        return_content: true
+      register: prometheus_targets
+      failed_when: >-
+        prometheus_targets.status != 200 or
+        (prometheus_targets.json.data.activeTargets |
+         selectattr('health', 'ne', 'up') | list | length) > 0
